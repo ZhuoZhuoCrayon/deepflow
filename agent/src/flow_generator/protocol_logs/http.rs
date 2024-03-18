@@ -216,7 +216,8 @@ pub struct HttpInfo {
 }
 
 impl HttpInfo {
-    pub fn merge_custom_to_http1(&mut self, custom: CustomInfo) {
+
+    pub fn merge_custom_to_http(&mut self, custom: CustomInfo) {
         // req rewrite
         if !custom.req.domain.is_empty() {
             self.host = custom.req.domain;
@@ -263,6 +264,13 @@ impl HttpInfo {
         if !custom.attributes.is_empty() {
             self.attributes.extend(custom.attributes);
         }
+    }
+
+    pub fn merge_custom_to_http2(&mut self, custom: CustomInfo) {
+        self.merge_custom_to_http(custom)
+    }
+    pub fn merge_custom_to_http1(&mut self, custom: CustomInfo) {
+        self.merge_custom_to_http(custom)
     }
 }
 
@@ -566,9 +574,6 @@ impl L7ProtocolParserInterface for HttpLog {
         match self.proto {
             L7Protocol::Http1 => {
                 self.parse_http_v1(payload, param, &mut info)?;
-                if param.parse_log {
-                    self.wasm_hook(param, payload, &mut info);
-                }
             }
             L7Protocol::Http2 | L7Protocol::Grpc => {
                 if self.http2_req_decoder.is_none() {
@@ -582,16 +587,16 @@ impl L7ProtocolParserInterface for HttpLog {
                             param,
                             &mut info,
                         )?;
-                        if param.parse_log {
+                        return if param.parse_log {
                             if self.proto == L7Protocol::Http2
                                 && !config.http_endpoint_disabled
                                 && info.path.len() > 0
                             {
                                 info.endpoint = Some(handle_endpoint(config, &info.path));
                             }
-                            return Ok(L7ParseResult::Single(L7ProtocolInfo::HttpInfo(info)));
+                            Ok(L7ParseResult::Single(L7ProtocolInfo::HttpInfo(info)))
                         } else {
-                            return Ok(L7ParseResult::None);
+                            Ok(L7ParseResult::None)
                         }
                     }
                     _ => self.parse_http_v2(payload, param, &mut info)?,
@@ -608,6 +613,7 @@ impl L7ProtocolParserInterface for HttpLog {
             _ => {}
         }
         if param.parse_log {
+            self.wasm_hook(param, payload, &mut info);
             Ok(L7ParseResult::Single(L7ProtocolInfo::HttpInfo(info)))
         } else {
             Ok(L7ParseResult::None)
@@ -1235,7 +1241,10 @@ impl HttpLog {
             PacketDirection::ServerToClient => vm.on_http_resp(payload, param, info),
         }
         .map(|custom| {
-            info.merge_custom_to_http1(custom);
+            match info.proto {
+                L7Protocol::Http2 | L7Protocol::Grpc => info.merge_custom_to_http2(custom),
+                _ => info.merge_custom_to_http1(custom)
+            }
         });
     }
 }
