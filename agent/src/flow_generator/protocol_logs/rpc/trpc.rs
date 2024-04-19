@@ -150,7 +150,7 @@ impl L7ProtocolInfoInterface for TrpcInfo {
             match right.msg_type {
                 LogMessageType::Request => {
                     if right.req_content_length.is_some() {
-                        left.req_content_length = right.resp_content_length
+                        left.req_content_length = right.req_content_length
                     }
                     if right.caller.is_some() {
                         left.caller = right.caller.clone()
@@ -255,22 +255,22 @@ impl TrpcLog {
                 && ret_code <= TrpcRetCode::TrpcStreamServerIdleTimeoutErr as i32)
         {
             self.perf_stats.as_mut().map(|p| p.inc_resp_err());
-            info.status = L7ResponseStatus::ServerError
+            info.status = L7ResponseStatus::ServerError;
         } else if (ret_code >= TrpcRetCode::TrpcClientInvokeTimeoutErr as i32
             && ret_code <= TrpcRetCode::TrpcClientReadFrameErr as i32)
             || ret_code >= TrpcRetCode::TrpcStreamClientNetworkErr as i32
         {
             self.perf_stats.as_mut().map(|p| p.inc_req());
-            info.status = L7ResponseStatus::ClientError
+            info.status = L7ResponseStatus::ClientError;
         } else {
             match param.direction {
                 PacketDirection::ClientToServer => {
                     self.perf_stats.as_mut().map(|p| p.inc_req());
-                    info.status = L7ResponseStatus::ClientError
+                    info.status = L7ResponseStatus::ClientError;
                 }
                 PacketDirection::ServerToClient => {
                     self.perf_stats.as_mut().map(|p| p.inc_resp_err());
-                    info.status = L7ResponseStatus::ServerError
+                    info.status = L7ResponseStatus::ServerError;
                 }
             }
         }
@@ -317,7 +317,6 @@ impl TrpcLog {
         match param.direction {
             PacketDirection::ClientToServer => {
                 let Some(req) = RequestProtocol::decode(&payload[16..16 + header_len as usize]).ok() else {
-                    warn!("[trpc] failed to decode RequestProtocol, payload -> {:?}", &payload[16..16 + header_len as usize]);
                     return Err(Error::TrpcLogParseFailed);
                 };
                 info.msg_type = LogMessageType::Request;
@@ -332,7 +331,6 @@ impl TrpcLog {
             }
             PacketDirection::ServerToClient => {
                 let Some(resp) = ResponseProtocol::decode(&payload[16..16 + header_len as usize]).ok() else {
-                    warn!("[trpc] failed to decode ResponseProtocol, payload -> {:?}", &payload[16..16 + header_len as usize]);
                     return Err(Error::TrpcLogParseFailed);
                 };
                 info.msg_type = LogMessageType::Response;
@@ -357,25 +355,31 @@ impl TrpcLog {
         param: &ParseParam,
         info: &mut TrpcInfo,
     ) -> Result<()> {
+        if payload.len() < total_len as usize {
+            return Err(Error::TrpcLogParseFailed);
+        }
         let Some(init_meta) = TrpcStreamInitMeta::decode(&payload[16..total_len as usize]).ok() else {
             return Err(Error::TrpcLogParseFailed);
         };
-        if init_meta.request_meta.is_some() {
+
+        if let Some(request_meta) = init_meta.request_meta {
             info.msg_type = LogMessageType::Request;
-            if let Some(request_meta) = init_meta.request_meta {
-                info.caller = Some(String::from_utf8(request_meta.caller).unwrap_or_default());
-                info.callee = Some(String::from_utf8(request_meta.callee).unwrap_or_default());
-                info.func = Some(String::from_utf8(request_meta.func).unwrap_or_default());
-                self.on_trans_info(request_meta.trans_info, info)?;
-            } else if let Some(response_meta) = init_meta.response_meta {
-                // 成功表示流将持续，只有失败才认为流结束
-                if response_meta.ret != TrpcRetCode::TrpcInvokeSuccess as i32 {
-                    info.msg_type = LogMessageType::Response;
-                    info.ret = Some(response_meta.ret);
-                    self.set_status(info, param);
-                }
+            info.caller = Some(String::from_utf8(request_meta.caller).unwrap_or_default());
+            info.callee = Some(String::from_utf8(request_meta.callee).unwrap_or_default());
+            info.func = Some(String::from_utf8(request_meta.func).unwrap_or_default());
+            warn!("[trpc] caller -> {:?}, callee -> {:?}, func -> {:?}", info.caller, info.callee, info.func);
+            self.on_trans_info(request_meta.trans_info, info)?;
+            warn!("[trpc] attributes -> {:?}", info.attributes);
+
+        } else if let Some(response_meta) = init_meta.response_meta {
+            // 成功表示流将持续，只有失败才认为流结束
+            if response_meta.ret != TrpcRetCode::TrpcInvokeSuccess as i32 {
+                info.msg_type = LogMessageType::Response;
+                info.ret = Some(response_meta.ret);
+                self.set_status(info, param);
             }
         }
+
         Ok(())
     }
 
@@ -386,6 +390,11 @@ impl TrpcLog {
         param: &ParseParam,
         info: &mut TrpcInfo,
     ) -> Result<()> {
+
+        if payload.len() < total_len as usize {
+            return Err(Error::TrpcLogParseFailed);
+        }
+
         let Some(close_meta) = TrpcStreamCloseMeta::decode(&payload[16..total_len as usize]).ok() else {
             return Err(Error::TrpcLogParseFailed);
         };
@@ -397,17 +406,19 @@ impl TrpcLog {
 
         if close_meta.close_type == 1 {
             if close_meta.ret == TrpcRetCode::TrpcInvokeSuccess as i32 {
-                info.ret = Some(TrpcRetCode::TrpcStreamUnknownErr as i32)
+                info.ret = Some(TrpcRetCode::TrpcStreamUnknownErr as i32);
             } else {
-                info.ret = Some(close_meta.ret)
+                info.ret = Some(close_meta.ret);
             }
+            self.set_status(info, param);
         } else {
             // 以服务端 close 作为最终响应
             if param.direction == PacketDirection::ServerToClient {
                 info.ret = Some(close_meta.ret);
+                self.set_status(info, param);
             }
         }
-        self.set_status(info, param);
+
         Ok(())
     }
 
@@ -436,10 +447,16 @@ impl TrpcLog {
                     Some(s) if s == TrpcStreamFrameType::TrpcStreamFrameClose as u8 => {
                         self.handle_stream_close(payload, total_len as u32, param, info)?;
                     }
-                    _ => {}
+                    _ => {
+                        // 其余视为失败
+                        return Err(Error::TrpcLogParseFailed);
+                    }
                 }
             }
-            _ => {}
+            _ => {
+                // 其余视为失败
+                return Err(Error::TrpcLogParseFailed);
+            }
         }
 
         info.cal_rrt(param, None).map(|rrt| {
