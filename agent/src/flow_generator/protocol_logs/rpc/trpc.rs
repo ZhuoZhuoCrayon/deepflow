@@ -31,6 +31,8 @@ use crate::{
     utils::bytes::{read_u16_be, read_u32_be},
 };
 
+use log::warn;
+
 #[derive(Serialize, Debug, Default, Clone)]
 pub struct TrpcInfo {
     #[serde(skip)]
@@ -204,6 +206,9 @@ impl L7ProtocolParserInterface for TrpcLog {
     }
 
     fn parse_payload(&mut self, payload: &[u8], param: &ParseParam) -> Result<L7ParseResult> {
+
+        warn!("[trpc] start to parse_payload");
+
         if self.perf_stats.is_none() && param.parse_perf {
             self.perf_stats = Some(L7PerfStats::default())
         };
@@ -312,6 +317,7 @@ impl TrpcLog {
         match param.direction {
             PacketDirection::ClientToServer => {
                 let Some(req) = RequestProtocol::decode(&payload[16..16 + header_len as usize]).ok() else {
+                    warn!("[trpc] failed to decode RequestProtocol, payload -> {:?}", &payload[16..16 + header_len as usize]);
                     return Err(Error::TrpcLogParseFailed);
                 };
                 info.msg_type = LogMessageType::Request;
@@ -320,16 +326,25 @@ impl TrpcLog {
                 info.callee = Some(String::from_utf8(req.callee).unwrap_or_default());
                 info.func = Some(String::from_utf8(req.func).unwrap_or_default());
                 info.req_content_length = Some(total_len - header_len - 16);
+                warn!("[trpc] caller -> {:?}, callee -> {:?}, func -> {:?}", info.caller, info.callee, info.func);
                 self.on_trans_info(req.trans_info, info)?;
+                warn!("[trpc] attributes -> {:?}", info.attributes);
             }
             PacketDirection::ServerToClient => {
                 let Some(resp) = ResponseProtocol::decode(&payload[16..16 + header_len as usize]).ok() else {
+                    warn!("[trpc] failed to decode ResponseProtocol, payload -> {:?}", &payload[16..16 + header_len as usize]);
                     return Err(Error::TrpcLogParseFailed);
                 };
                 info.msg_type = LogMessageType::Response;
                 info.ret = Some(resp.ret);
+                info.resp_content_length = Some(total_len - header_len - 16);
+
+                warn!("[trpc] msg_type -> {:?}, ret -> {:?}, resp_content_length -> {:?}", info.msg_type, info.ret, info.resp_content_length);
+
                 self.set_status(info, param);
                 self.on_trans_info(resp.trans_info, info)?;
+
+                warn!("[trpc] attributes -> {:?}, status -> {:?}", info.attributes, info.status);
             }
         }
         Ok(())
@@ -400,9 +415,13 @@ impl TrpcLog {
         info.data_frame_type = Some(payload[2]);
         info.stream_frame_type = Some(payload[3]);
 
+        warn!("[trpc] data_frame_type -> {:?}, stream_frame_type -> {:?}", info.data_frame_type, info.stream_frame_type);
+
         let total_len = read_u32_be(&payload[4..8]) as usize;
         let header_len = read_u16_be(&payload[8..10]) as usize;
         info.stream_id = Some(read_u32_be(&payload[10..14]));
+
+        warn!("[trpc] total_len -> {:?}, header_len -> {:?}, stream_id -> {:?}", total_len, header_len, info.stream_id);
 
         // 根据不同模式解析 body
         match info.data_frame_type {
