@@ -400,6 +400,7 @@ fn main() {
         enable_ebpf_protocol(SOCK_DATA_SOFARPC as c_int);
         enable_ebpf_protocol(SOCK_DATA_FASTCGI as c_int);
         enable_ebpf_protocol(SOCK_DATA_BRPC as c_int);
+        enable_ebpf_protocol(SOCK_DATA_TRPC as c_int);
         enable_ebpf_protocol(SOCK_DATA_MYSQL as c_int);
         enable_ebpf_protocol(SOCK_DATA_POSTGRESQL as c_int);
         enable_ebpf_protocol(SOCK_DATA_REDIS as c_int);
@@ -496,6 +497,13 @@ fn main() {
         );
         set_protocol_ports_bitmap(
             SOCK_DATA_BRPC as c_int,
+            CString::new("1-65535".as_bytes())
+                .unwrap()
+                .as_c_str()
+                .as_ptr(),
+        );
+        set_protocol_ports_bitmap(
+            SOCK_DATA_TRPC as c_int,
             CString::new("1-65535".as_bytes())
                 .unwrap()
                 .as_c_str()
