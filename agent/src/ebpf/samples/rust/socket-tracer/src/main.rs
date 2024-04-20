@@ -235,6 +235,8 @@ extern "C" fn socket_trace_callback(sd: *mut SK_BPF_DATA) {
             proto_tag.push_str("FASTCGI");
         } else if sk_proto_safe(sd) == SOCK_DATA_BRPC {
             proto_tag.push_str("BRPC");
+        } else if sk_proto_safe(sd) == SOCK_DATA_TRPC {
+            proto_tag.push_str("TRPC");
         } else if sk_proto_safe(sd) == SOCK_DATA_MONGO {
             proto_tag.push_str("MONGO");
         } else if sk_proto_safe(sd) == SOCK_DATA_TLS {

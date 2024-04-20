@@ -19,7 +19,6 @@ use crate::{
         meta_packet::EbpfFlags,
     },
     flow_generator::{
-        Error,
         error::Result,
         protocol_logs::{
             pb_adapter::{
@@ -27,6 +26,7 @@ use crate::{
             },
             AppProtoHead, L7ResponseStatus, LogMessageType,
         },
+        Error,
     },
     utils::bytes::{read_u16_be, read_u32_be},
 };
@@ -98,7 +98,7 @@ impl From<TrpcInfo> for L7ProtocolSendLog {
                 ..Default::default()
             },
             resp: L7Response {
-                status: L7ResponseStatus::Ok,
+                status: info.status,
                 code: info.ret,
                 ..Default::default()
             },
@@ -206,7 +206,6 @@ impl L7ProtocolParserInterface for TrpcLog {
     }
 
     fn parse_payload(&mut self, payload: &[u8], param: &ParseParam) -> Result<L7ParseResult> {
-
         warn!("[trpc] start to parse_payload");
 
         if self.perf_stats.is_none() && param.parse_perf {
@@ -325,7 +324,10 @@ impl TrpcLog {
                 info.callee = Some(String::from_utf8(req.callee).unwrap_or_default());
                 info.func = Some(String::from_utf8(req.func).unwrap_or_default());
                 info.req_content_length = Some(total_len - header_len - 16);
-                warn!("[trpc] caller -> {:?}, callee -> {:?}, func -> {:?}", info.caller, info.callee, info.func);
+                warn!(
+                    "[trpc] caller -> {:?}, callee -> {:?}, func -> {:?}",
+                    info.caller, info.callee, info.func
+                );
                 self.on_trans_info(req.trans_info, info)?;
                 warn!("[trpc] attributes -> {:?}", info.attributes);
             }
@@ -337,12 +339,18 @@ impl TrpcLog {
                 info.ret = Some(resp.ret);
                 info.resp_content_length = Some(total_len - header_len - 16);
 
-                warn!("[trpc] msg_type -> {:?}, ret -> {:?}, resp_content_length -> {:?}", info.msg_type, info.ret, info.resp_content_length);
+                warn!(
+                    "[trpc] msg_type -> {:?}, ret -> {:?}, resp_content_length -> {:?}",
+                    info.msg_type, info.ret, info.resp_content_length
+                );
 
                 self.set_status(info, param);
                 self.on_trans_info(resp.trans_info, info)?;
 
-                warn!("[trpc] attributes -> {:?}, status -> {:?}", info.attributes, info.status);
+                warn!(
+                    "[trpc] attributes -> {:?}, status -> {:?}",
+                    info.attributes, info.status
+                );
             }
         }
         Ok(())
@@ -367,10 +375,12 @@ impl TrpcLog {
             info.caller = Some(String::from_utf8(request_meta.caller).unwrap_or_default());
             info.callee = Some(String::from_utf8(request_meta.callee).unwrap_or_default());
             info.func = Some(String::from_utf8(request_meta.func).unwrap_or_default());
-            warn!("[trpc] caller -> {:?}, callee -> {:?}, func -> {:?}", info.caller, info.callee, info.func);
+            warn!(
+                "[trpc] caller -> {:?}, callee -> {:?}, func -> {:?}",
+                info.caller, info.callee, info.func
+            );
             self.on_trans_info(request_meta.trans_info, info)?;
             warn!("[trpc] attributes -> {:?}", info.attributes);
-
         } else if let Some(response_meta) = init_meta.response_meta {
             // 成功表示流将持续，只有失败才认为流结束
             if response_meta.ret != TrpcRetCode::TrpcInvokeSuccess as i32 {
@@ -390,7 +400,6 @@ impl TrpcLog {
         param: &ParseParam,
         info: &mut TrpcInfo,
     ) -> Result<()> {
-
         if payload.len() < total_len as usize {
             return Err(Error::TrpcLogParseFailed);
         }
@@ -426,13 +435,19 @@ impl TrpcLog {
         info.data_frame_type = Some(payload[2]);
         info.stream_frame_type = Some(payload[3]);
 
-        warn!("[trpc] data_frame_type -> {:?}, stream_frame_type -> {:?}", info.data_frame_type, info.stream_frame_type);
+        warn!(
+            "[trpc] data_frame_type -> {:?}, stream_frame_type -> {:?}",
+            info.data_frame_type, info.stream_frame_type
+        );
 
         let total_len = read_u32_be(&payload[4..8]) as usize;
         let header_len = read_u16_be(&payload[8..10]) as usize;
         info.stream_id = Some(read_u32_be(&payload[10..14]));
 
-        warn!("[trpc] total_len -> {:?}, header_len -> {:?}, stream_id -> {:?}", total_len, header_len, info.stream_id);
+        warn!(
+            "[trpc] total_len -> {:?}, header_len -> {:?}, stream_id -> {:?}",
+            total_len, header_len, info.stream_id
+        );
 
         // 根据不同模式解析 body
         match info.data_frame_type {
