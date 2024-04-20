@@ -2223,7 +2223,7 @@ static __inline enum message_type infer_trpc_message(const char *buf,
             return MSG_UNKNOWN;
     }
 
-    if (buf[0] != '\x93' || buf[1] != '\x00')
+    if (buf[0] != '\x09' || buf[1] != '\x30')
         return MSG_UNKNOWN;
 
     __u8 data_frame_type = buf[2];
