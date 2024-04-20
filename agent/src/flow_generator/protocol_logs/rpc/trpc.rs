@@ -259,12 +259,12 @@ impl TrpcLog {
             && ret_code <= TrpcRetCode::TrpcClientReadFrameErr as i32)
             || ret_code >= TrpcRetCode::TrpcStreamClientNetworkErr as i32
         {
-            self.perf_stats.as_mut().map(|p| p.inc_req());
+            self.perf_stats.as_mut().map(|p| p.inc_req_err());
             info.status = L7ResponseStatus::ClientError;
         } else {
             match param.direction {
                 PacketDirection::ClientToServer => {
-                    self.perf_stats.as_mut().map(|p| p.inc_req());
+                    self.perf_stats.as_mut().map(|p| p.inc_req_err());
                     info.status = L7ResponseStatus::ClientError;
                 }
                 PacketDirection::ServerToClient => {
@@ -319,6 +319,7 @@ impl TrpcLog {
                     return Err(Error::TrpcLogParseFailed);
                 };
                 info.msg_type = LogMessageType::Request;
+                self.perf_stats.as_mut().map(|p| p.inc_req());
 
                 info.caller = Some(String::from_utf8(req.caller).unwrap_or_default());
                 info.callee = Some(String::from_utf8(req.callee).unwrap_or_default());
@@ -336,6 +337,8 @@ impl TrpcLog {
                     return Err(Error::TrpcLogParseFailed);
                 };
                 info.msg_type = LogMessageType::Response;
+                self.perf_stats.as_mut().map(|p| p.inc_resp());
+
                 info.ret = Some(resp.ret);
                 info.resp_content_length = Some(total_len - header_len - 16);
 
@@ -372,6 +375,7 @@ impl TrpcLog {
 
         if let Some(request_meta) = init_meta.request_meta {
             info.msg_type = LogMessageType::Request;
+            self.perf_stats.as_mut().map(|p| p.inc_req());
             info.caller = Some(String::from_utf8(request_meta.caller).unwrap_or_default());
             info.callee = Some(String::from_utf8(request_meta.callee).unwrap_or_default());
             info.func = Some(String::from_utf8(request_meta.func).unwrap_or_default());
@@ -385,6 +389,8 @@ impl TrpcLog {
             // 成功表示流将持续，只有失败才认为流结束
             if response_meta.ret != TrpcRetCode::TrpcInvokeSuccess as i32 {
                 info.msg_type = LogMessageType::Response;
+                self.perf_stats.as_mut().map(|p| p.inc_resp());
+
                 info.ret = Some(response_meta.ret);
                 self.set_status(info, param);
             }
