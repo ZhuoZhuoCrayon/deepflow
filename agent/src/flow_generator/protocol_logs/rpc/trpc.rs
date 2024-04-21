@@ -379,6 +379,7 @@ impl TrpcLog {
             info.caller = Some(String::from_utf8(request_meta.caller).unwrap_or_default());
             info.callee = Some(String::from_utf8(request_meta.callee).unwrap_or_default());
             info.func = Some(String::from_utf8(request_meta.func).unwrap_or_default());
+            info.req_content_length = Some(total_len - 16);
             warn!(
                 "[trpc] caller -> {:?}, callee -> {:?}, func -> {:?}",
                 info.caller, info.callee, info.func
@@ -414,9 +415,15 @@ impl TrpcLog {
             return Err(Error::TrpcLogParseFailed);
         };
 
+        warn!(
+            "[trpc][handle_stream_close] close_type -> {:?}, ret -> {:?}, direction -> {:?}",
+            close_meta.close_type, close_meta.ret, param.direction
+        );
+
         // 以服务端 close 作为最终响应
         if param.direction == PacketDirection::ServerToClient {
             info.msg_type = LogMessageType::Response;
+            self.perf_stats.as_mut().map(|p| p.inc_resp());
         }
 
         if close_meta.close_type == 1 {
@@ -431,6 +438,10 @@ impl TrpcLog {
             if param.direction == PacketDirection::ServerToClient {
                 info.ret = Some(close_meta.ret);
                 self.set_status(info, param);
+                warn!(
+                    "[trpc][handle_stream_close] status -> {:?}, msg_type -> {:?}",
+                    info.status, info.msg_type
+                );
             }
         }
 
@@ -451,8 +462,8 @@ impl TrpcLog {
         info.stream_id = Some(read_u32_be(&payload[10..14]));
 
         warn!(
-            "[trpc] total_len -> {:?}, header_len -> {:?}, stream_id -> {:?}",
-            total_len, header_len, info.stream_id
+            "[trpc] payload_len -> {:?}, total_len -> {:?}, header_len -> {:?}, stream_id -> {:?}",
+            payload.len(), total_len, header_len, info.stream_id
         );
 
         // 根据不同模式解析 body
@@ -468,16 +479,13 @@ impl TrpcLog {
                     Some(s) if s == TrpcStreamFrameType::TrpcStreamFrameClose as u8 => {
                         self.handle_stream_close(payload, total_len as u32, param, info)?;
                     }
-                    _ => {
-                        // 其余视为失败
-                        return Err(Error::TrpcLogParseFailed);
+                    Some(s) if s == TrpcStreamFrameType::TrpcStreamFrameData as u8 => {
+                        info.resp_content_length = Some(total_len as u32 - 16);
                     }
+                    _ => {}
                 }
             }
-            _ => {
-                // 其余视为失败
-                return Err(Error::TrpcLogParseFailed);
-            }
+            _ => return Err(Error::TrpcLogParseFailed),
         }
 
         info.cal_rrt(param, None).map(|rrt| {

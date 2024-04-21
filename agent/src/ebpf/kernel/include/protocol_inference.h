@@ -2235,7 +2235,7 @@ static __inline enum message_type infer_trpc_message(const char *buf,
     unsigned int total_len = __bpf_ntohl(*(__u32 *) & buf[4]);
     unsigned int header_len = __bpf_ntohl(*(__u16 *) & buf[8]);
 
-    if (total_len > count || header_len > count || header_len > total_len)
+    if (header_len > total_len)
         return MSG_UNKNOWN;
 
     return MSG_REQUEST;
