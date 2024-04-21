@@ -2226,17 +2226,17 @@ static __inline enum message_type infer_trpc_message(const char *buf,
     if (buf[0] != '\x09' || buf[1] != '\x30')
         return MSG_UNKNOWN;
 
-    __u8 data_frame_type = buf[2];
-    __u8 stream_frame_type = buf[3];
+    // __u8 data_frame_type = buf[2];
+    // __u8 stream_frame_type = buf[3];
 
-    if (data_frame_type > 1 || stream_frame_type > 4)
+    if (buf[2] != '\x00' || buf[3] != '\x00')
         return MSG_UNKNOWN;
 
-    unsigned int total_len = __bpf_ntohl(*(__u32 *) & buf[4]);
-    unsigned int header_len = __bpf_ntohl(*(__u16 *) & buf[8]);
+    // unsigned int total_len = __bpf_ntohl(*(__u32 *) & buf[4]);
+    // unsigned int header_len = __bpf_ntohl(*(__u16 *) & buf[8]);
 
-    if (header_len > total_len)
-        return MSG_UNKNOWN;
+    // if (header_len > total_len)
+    //     return MSG_UNKNOWN;
 
     return MSG_REQUEST;
 }
