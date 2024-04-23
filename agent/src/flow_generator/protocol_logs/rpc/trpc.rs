@@ -11,6 +11,7 @@ use trpc_policy::{
 };
 
 use crate::{
+    HttpLog,
     common::{
         enums::IpProtocol,
         flow::{L7PerfStats, L7Protocol, PacketDirection},
@@ -28,6 +29,7 @@ use crate::{
         },
         Error,
     },
+    config::handler::L7LogDynamicConfig,
     utils::bytes::{read_u16_be, read_u32_be},
 };
 
@@ -58,6 +60,10 @@ pub struct TrpcInfo {
     status: L7ResponseStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     ret: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    func_ret: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    err_msg: Option<String>,
 
     #[serde(rename = "request_id", skip_serializing_if = "Option::is_none")]
     stream_id: Option<u32>,
@@ -92,8 +98,12 @@ impl From<TrpcInfo> for L7ProtocolSendLog {
             req_len: info.req_content_length,
             resp_len: info.resp_content_length,
             req: L7Request {
-                req_type: String::from("POST"),
-                resource: info.callee.unwrap_or_default(),
+                req_type: match info.data_frame_type {
+                    Some(0) => String::from("UNARY"),
+                    Some(1) => String::from("STREAM"),
+                    _ => String::from("UNKNOWN")
+                },
+                resource: info.callee.clone().unwrap_or_default(),
                 endpoint: endpoint.unwrap_or_default(),
                 ..Default::default()
             },
@@ -109,6 +119,7 @@ impl From<TrpcInfo> for L7ProtocolSendLog {
             }),
             ext_info: Some(ExtendedInfo {
                 request_id: info.stream_id,
+                rpc_service: info.callee,
                 attributes: {
                     if info.attributes.is_empty() {
                         None
@@ -172,6 +183,12 @@ impl L7ProtocolInfoInterface for TrpcInfo {
                     if right.ret.is_some() {
                         left.ret = right.ret
                     }
+                    if right.func_ret.is_some() {
+                        left.func_ret = right.ret;
+                    }
+                    if right.err_msg.is_some() {
+                        left.err_msg = right.err_msg.clone()
+                    }
                 }
                 _ => {}
             }
@@ -182,7 +199,9 @@ impl L7ProtocolInfoInterface for TrpcInfo {
             if right.span_id.is_some() {
                 left.span_id = right.span_id.clone()
             }
+            warn!("[trpc] info -> {:?}", left);
         }
+
         Ok(())
     }
 }
@@ -207,7 +226,6 @@ impl L7ProtocolParserInterface for TrpcLog {
 
     fn parse_payload(&mut self, payload: &[u8], param: &ParseParam) -> Result<L7ParseResult> {
         warn!("[trpc] start to parse_payload");
-
         if self.perf_stats.is_none() && param.parse_perf {
             self.perf_stats = Some(L7PerfStats::default())
         };
@@ -245,37 +263,37 @@ impl L7ProtocolParserInterface for TrpcLog {
 
 impl TrpcLog {
     fn set_status(&mut self, info: &mut TrpcInfo, param: &ParseParam) {
-        let ret_code = info.ret.unwrap_or_default();
-        if ret_code == TrpcRetCode::TrpcInvokeSuccess as i32 {
-            info.status = L7ResponseStatus::Ok
-        } else if (ret_code >= TrpcRetCode::TrpcServerDecodeErr as i32
-            && ret_code <= TrpcRetCode::TrpcServerValidateErr as i32)
-            || (ret_code >= TrpcRetCode::TrpcStreamServerNetworkErr as i32
-                && ret_code <= TrpcRetCode::TrpcStreamServerIdleTimeoutErr as i32)
-        {
-            self.perf_stats.as_mut().map(|p| p.inc_resp_err());
-            info.status = L7ResponseStatus::ServerError;
-        } else if (ret_code >= TrpcRetCode::TrpcClientInvokeTimeoutErr as i32
-            && ret_code <= TrpcRetCode::TrpcClientReadFrameErr as i32)
-            || ret_code >= TrpcRetCode::TrpcStreamClientNetworkErr as i32
-        {
-            self.perf_stats.as_mut().map(|p| p.inc_req_err());
-            info.status = L7ResponseStatus::ClientError;
-        } else {
-            match param.direction {
-                PacketDirection::ClientToServer => {
-                    self.perf_stats.as_mut().map(|p| p.inc_req_err());
-                    info.status = L7ResponseStatus::ClientError;
-                }
-                PacketDirection::ServerToClient => {
-                    self.perf_stats.as_mut().map(|p| p.inc_resp_err());
-                    info.status = L7ResponseStatus::ServerError;
+        let success_ret_code = TrpcRetCode::TrpcInvokeSuccess as i32;
+        if info.ret == Some(success_ret_code) && info.func_ret.is_some() {
+             info.ret = info.func_ret
+        }
+
+        match info.ret {
+            Some(ret) if ret == success_ret_code => {
+                info.status = L7ResponseStatus::Ok;
+            }
+            _ => {
+                match param.direction {
+                    PacketDirection::ClientToServer => {
+                        self.perf_stats.as_mut().map(|p| p.inc_req_err());
+                        info.status = L7ResponseStatus::ClientError;
+                    }
+                    PacketDirection::ServerToClient => {
+                        self.perf_stats.as_mut().map(|p| p.inc_resp_err());
+                        info.status = L7ResponseStatus::ServerError;
+                    }
                 }
             }
         }
     }
 
-    fn on_header(&mut self, key: &[u8], val: &[u8], info: &mut TrpcInfo) -> Result<()> {
+    fn on_header(
+        &mut self,
+        key: &[u8],
+        val: &[u8],
+        info: &mut TrpcInfo,
+        config: &L7LogDynamicConfig,
+    ) -> Result<()> {
         // key must be valid utf8
         let Ok(key) = str::from_utf8(key) else {
             return Ok(());
@@ -287,10 +305,24 @@ impl TrpcLog {
         let Ok(val) = str::from_utf8(val) else {
             return Ok(());
         };
-        info.attributes.push(KeyVal {
-            key: key.to_owned(),
-            val: val.to_owned(),
-        });
+
+        let mut need_skip = false;
+        if config.is_trace_id(key) {
+            info.trace_id = HttpLog::decode_id(val, key, HttpLog::TRACE_ID);
+            need_skip = true
+        }
+        if config.is_span_id(key) {
+            info.span_id = HttpLog::decode_id(val, key, HttpLog::SPAN_ID);
+            need_skip = true
+        }
+
+        if !need_skip {
+            info.attributes.push(KeyVal {
+                key: key.to_owned(),
+                val: val.to_owned(),
+            });
+        }
+
         Ok(())
     }
 
@@ -298,9 +330,10 @@ impl TrpcLog {
         &mut self,
         trans_info: HashMap<String, Vec<u8>>,
         info: &mut TrpcInfo,
+        config: &L7LogDynamicConfig,
     ) -> Result<()> {
         for (key, value) in trans_info {
-            self.on_header(key.as_bytes(), &value, info)?;
+            self.on_header(key.as_bytes(), &value, info, config)?;
         }
         Ok(())
     }
@@ -312,6 +345,7 @@ impl TrpcLog {
         header_len: u32,
         param: &ParseParam,
         info: &mut TrpcInfo,
+        config: &L7LogDynamicConfig,
     ) -> Result<()> {
         match param.direction {
             PacketDirection::ClientToServer => {
@@ -321,16 +355,19 @@ impl TrpcLog {
                 info.msg_type = LogMessageType::Request;
                 self.perf_stats.as_mut().map(|p| p.inc_req());
 
+                // stream id for streaming rpc, request id for unary rpc
+                info.stream_id = Some(req.request_id);
                 info.caller = Some(String::from_utf8(req.caller).unwrap_or_default());
                 info.callee = Some(String::from_utf8(req.callee).unwrap_or_default());
                 info.func = Some(String::from_utf8(req.func).unwrap_or_default());
                 info.req_content_length = Some(total_len - header_len - 16);
+
+                self.on_trans_info(req.trans_info, info, config)?;
+
                 warn!(
-                    "[trpc] caller -> {:?}, callee -> {:?}, func -> {:?}",
-                    info.caller, info.callee, info.func
+                    "[trpc][unary] Stream[{:?}] caller -> {:?}, callee -> {:?}, func -> {:?}, attributes -> {:?}",
+                    info.stream_id, info.caller, info.callee, info.func, info.attributes
                 );
-                self.on_trans_info(req.trans_info, info)?;
-                warn!("[trpc] attributes -> {:?}", info.attributes);
             }
             PacketDirection::ServerToClient => {
                 let Some(resp) = ResponseProtocol::decode(&payload[16..16 + header_len as usize]).ok() else {
@@ -339,20 +376,19 @@ impl TrpcLog {
                 info.msg_type = LogMessageType::Response;
                 self.perf_stats.as_mut().map(|p| p.inc_resp());
 
+                // stream id for streaming rpc, request id for unary rpc
+                info.stream_id = Some(resp.request_id);
                 info.ret = Some(resp.ret);
+                info.func_ret = Some(resp.func_ret);
+                info.err_msg = Some(String::from_utf8(resp.error_msg).unwrap_or_default());
                 info.resp_content_length = Some(total_len - header_len - 16);
 
-                warn!(
-                    "[trpc] msg_type -> {:?}, ret -> {:?}, resp_content_length -> {:?}",
-                    info.msg_type, info.ret, info.resp_content_length
-                );
-
                 self.set_status(info, param);
-                self.on_trans_info(resp.trans_info, info)?;
+                self.on_trans_info(resp.trans_info, info, config)?;
 
                 warn!(
-                    "[trpc] attributes -> {:?}, status -> {:?}",
-                    info.attributes, info.status
+                    "[trpc][unary] Stream[{:?}] msg_type -> {:?}, resp_content_length -> {:?}, attributes -> {:?}, ret -> {:?}, status -> {:?}",
+                    info.stream_id, info.msg_type, info.resp_content_length, info.attributes, info.ret, info.status
                 );
             }
         }
@@ -365,6 +401,7 @@ impl TrpcLog {
         total_len: u32,
         param: &ParseParam,
         info: &mut TrpcInfo,
+        config: &L7LogDynamicConfig,
     ) -> Result<()> {
         if payload.len() < total_len as usize {
             return Err(Error::TrpcLogParseFailed);
@@ -380,12 +417,12 @@ impl TrpcLog {
             info.callee = Some(String::from_utf8(request_meta.callee).unwrap_or_default());
             info.func = Some(String::from_utf8(request_meta.func).unwrap_or_default());
             info.req_content_length = Some(total_len - 16);
+            self.on_trans_info(request_meta.trans_info, info, config)?;
+
             warn!(
-                "[trpc] caller -> {:?}, callee -> {:?}, func -> {:?}",
-                info.caller, info.callee, info.func
+                "[trpc][init] Stream[{:?}] caller -> {:?}, callee -> {:?}, func -> {:?}, attributes -> {:?}",
+                info.stream_id, info.caller, info.callee, info.func, info.attributes
             );
-            self.on_trans_info(request_meta.trans_info, info)?;
-            warn!("[trpc] attributes -> {:?}", info.attributes);
         } else if let Some(response_meta) = init_meta.response_meta {
             // 成功表示流将持续，只有失败才认为流结束
             if response_meta.ret != TrpcRetCode::TrpcInvokeSuccess as i32 {
@@ -393,11 +430,11 @@ impl TrpcLog {
                 self.perf_stats.as_mut().map(|p| p.inc_resp());
 
                 info.ret = Some(response_meta.ret);
+                info.err_msg = Some(String::from_utf8(response_meta.error_msg).unwrap_or_default());
                 self.set_status(info, param);
             }
         }
-
-        Ok(())
+        Err(Error::TrpcLogParseFailed)
     }
 
     fn handle_stream_close(
@@ -406,6 +443,7 @@ impl TrpcLog {
         total_len: u32,
         param: &ParseParam,
         info: &mut TrpcInfo,
+        config: &L7LogDynamicConfig,
     ) -> Result<()> {
         if payload.len() < total_len as usize {
             return Err(Error::TrpcLogParseFailed);
@@ -415,10 +453,23 @@ impl TrpcLog {
             return Err(Error::TrpcLogParseFailed);
         };
 
-        warn!(
-            "[trpc][handle_stream_close] close_type -> {:?}, ret -> {:?}, direction -> {:?}",
-            close_meta.close_type, close_meta.ret, param.direction
-        );
+        info.ret = Some(close_meta.ret);
+        info.func_ret = Some(close_meta.func_ret);
+        info.err_msg = Some(String::from_utf8(close_meta.msg).unwrap_or_default());
+        self.on_trans_info(close_meta.trans_info, info, config)?;
+
+        if close_meta.close_type == 1 {
+            if close_meta.ret == TrpcRetCode::TrpcInvokeSuccess as i32 {
+                info.ret = Some(TrpcRetCode::TrpcStreamUnknownErr as i32);
+            }
+            self.set_status(info, param);
+        } else {
+            // 以服务端 close 作为最终响应
+            if param.direction == PacketDirection::ServerToClient {
+                info.resp_content_length = Some(total_len - 16);
+                self.set_status(info, param);
+            }
+        }
 
         // 以服务端 close 作为最终响应
         if param.direction == PacketDirection::ServerToClient {
@@ -426,63 +477,51 @@ impl TrpcLog {
             self.perf_stats.as_mut().map(|p| p.inc_resp());
         }
 
-        if close_meta.close_type == 1 {
-            if close_meta.ret == TrpcRetCode::TrpcInvokeSuccess as i32 {
-                info.ret = Some(TrpcRetCode::TrpcStreamUnknownErr as i32);
-            } else {
-                info.ret = Some(close_meta.ret);
-            }
-            self.set_status(info, param);
-        } else {
-            // 以服务端 close 作为最终响应
-            if param.direction == PacketDirection::ServerToClient {
-                info.ret = Some(close_meta.ret);
-                self.set_status(info, param);
-                warn!(
-                    "[trpc][handle_stream_close] status -> {:?}, msg_type -> {:?}",
-                    info.status, info.msg_type
-                );
-            }
-        }
+        warn!(
+            "[trpc][close] Stream[{:?}] close_type -> {:?} msg_type -> {:?}, direction -> {:?}, ret -> {:?}, status -> {:?}",
+            info.stream_id, close_meta.close_type, info.msg_type, param.direction, info.ret, info.status
+        );
 
         Ok(())
     }
 
     fn parse(&mut self, payload: &[u8], param: &ParseParam, info: &mut TrpcInfo) -> Result<()> {
+
+        let Some(config) = param.parse_config else {
+            return Err(Error::TrpcLogParseFailed);
+        };
+
         info.data_frame_type = Some(payload[2]);
         info.stream_frame_type = Some(payload[3]);
-
-        warn!(
-            "[trpc] data_frame_type -> {:?}, stream_frame_type -> {:?}",
-            info.data_frame_type, info.stream_frame_type
-        );
 
         let total_len = read_u32_be(&payload[4..8]) as usize;
         let header_len = read_u16_be(&payload[8..10]) as usize;
         info.stream_id = Some(read_u32_be(&payload[10..14]));
 
         warn!(
-            "[trpc] payload_len -> {:?}, total_len -> {:?}, header_len -> {:?}, stream_id -> {:?}",
-            payload.len(), total_len, header_len, info.stream_id
+            "[trpc] data_frame_type -> {:?}, stream_frame_type -> {:?}, payload_len -> {:?}, total_len -> {:?}, header_len -> {:?}",
+            info.data_frame_type, info.stream_frame_type, payload.len(), total_len, header_len
         );
 
         // 根据不同模式解析 body
         match info.data_frame_type {
             Some(d) if d == TrpcDataFrameType::TrpcUnaryFrame as u8 => {
-                self.handle_unary(payload, total_len as u32, header_len as u32, param, info)?;
+                self.handle_unary(payload, total_len as u32, header_len as u32, param, info, &config.l7_log_dynamic)?;
             }
             Some(d) if d == TrpcDataFrameType::TrpcStreamFrame as u8 => {
                 match info.stream_frame_type {
                     Some(s) if s == TrpcStreamFrameType::TrpcStreamFrameInit as u8 => {
-                        self.handle_stream_init(payload, total_len as u32, param, info)?;
+                        self.handle_stream_init(payload, total_len as u32, param, info, &config.l7_log_dynamic)?;
                     }
                     Some(s) if s == TrpcStreamFrameType::TrpcStreamFrameClose as u8 => {
-                        self.handle_stream_close(payload, total_len as u32, param, info)?;
+                        self.handle_stream_close(payload, total_len as u32, param, info, &config.l7_log_dynamic)?;
                     }
                     Some(s) if s == TrpcStreamFrameType::TrpcStreamFrameData as u8 => {
                         info.resp_content_length = Some(total_len as u32 - 16);
                     }
-                    _ => {}
+                    _ => {
+                        info.msg_type = LogMessageType::Request;
+                    }
                 }
             }
             _ => return Err(Error::TrpcLogParseFailed),
