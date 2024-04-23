@@ -11,7 +11,6 @@ use trpc_policy::{
 };
 
 use crate::{
-    HttpLog,
     common::{
         enums::IpProtocol,
         flow::{L7PerfStats, L7Protocol, PacketDirection},
@@ -19,6 +18,7 @@ use crate::{
         l7_protocol_log::{L7ParseResult, L7ProtocolParserInterface, ParseParam},
         meta_packet::EbpfFlags,
     },
+    config::handler::L7LogDynamicConfig,
     flow_generator::{
         error::Result,
         protocol_logs::{
@@ -29,8 +29,8 @@ use crate::{
         },
         Error,
     },
-    config::handler::L7LogDynamicConfig,
     utils::bytes::{read_u16_be, read_u32_be},
+    HttpLog,
 };
 
 use log::warn;
@@ -101,7 +101,7 @@ impl From<TrpcInfo> for L7ProtocolSendLog {
                 req_type: match info.data_frame_type {
                     Some(0) => String::from("UNARY"),
                     Some(1) => String::from("STREAM"),
-                    _ => String::from("UNKNOWN")
+                    _ => String::from("UNKNOWN"),
                 },
                 resource: info.callee.clone().unwrap_or_default(),
                 endpoint: endpoint.unwrap_or_default(),
@@ -265,25 +265,23 @@ impl TrpcLog {
     fn set_status(&mut self, info: &mut TrpcInfo, param: &ParseParam) {
         let success_ret_code = TrpcRetCode::TrpcInvokeSuccess as i32;
         if info.ret == Some(success_ret_code) && info.func_ret.is_some() {
-             info.ret = info.func_ret
+            info.ret = info.func_ret
         }
 
         match info.ret {
             Some(ret) if ret == success_ret_code => {
                 info.status = L7ResponseStatus::Ok;
             }
-            _ => {
-                match param.direction {
-                    PacketDirection::ClientToServer => {
-                        self.perf_stats.as_mut().map(|p| p.inc_req_err());
-                        info.status = L7ResponseStatus::ClientError;
-                    }
-                    PacketDirection::ServerToClient => {
-                        self.perf_stats.as_mut().map(|p| p.inc_resp_err());
-                        info.status = L7ResponseStatus::ServerError;
-                    }
+            _ => match param.direction {
+                PacketDirection::ClientToServer => {
+                    self.perf_stats.as_mut().map(|p| p.inc_req_err());
+                    info.status = L7ResponseStatus::ClientError;
                 }
-            }
+                PacketDirection::ServerToClient => {
+                    self.perf_stats.as_mut().map(|p| p.inc_resp_err());
+                    info.status = L7ResponseStatus::ServerError;
+                }
+            },
         }
     }
 
@@ -486,7 +484,6 @@ impl TrpcLog {
     }
 
     fn parse(&mut self, payload: &[u8], param: &ParseParam, info: &mut TrpcInfo) -> Result<()> {
-
         let Some(config) = param.parse_config else {
             return Err(Error::TrpcLogParseFailed);
         };
@@ -506,15 +503,34 @@ impl TrpcLog {
         // 根据不同模式解析 body
         match info.data_frame_type {
             Some(d) if d == TrpcDataFrameType::TrpcUnaryFrame as u8 => {
-                self.handle_unary(payload, total_len as u32, header_len as u32, param, info, &config.l7_log_dynamic)?;
+                self.handle_unary(
+                    payload,
+                    total_len as u32,
+                    header_len as u32,
+                    param,
+                    info,
+                    &config.l7_log_dynamic,
+                )?;
             }
             Some(d) if d == TrpcDataFrameType::TrpcStreamFrame as u8 => {
                 match info.stream_frame_type {
                     Some(s) if s == TrpcStreamFrameType::TrpcStreamFrameInit as u8 => {
-                        self.handle_stream_init(payload, total_len as u32, param, info, &config.l7_log_dynamic)?;
+                        self.handle_stream_init(
+                            payload,
+                            total_len as u32,
+                            param,
+                            info,
+                            &config.l7_log_dynamic,
+                        )?;
                     }
                     Some(s) if s == TrpcStreamFrameType::TrpcStreamFrameClose as u8 => {
-                        self.handle_stream_close(payload, total_len as u32, param, info, &config.l7_log_dynamic)?;
+                        self.handle_stream_close(
+                            payload,
+                            total_len as u32,
+                            param,
+                            info,
+                            &config.l7_log_dynamic,
+                        )?;
                     }
                     Some(s) if s == TrpcStreamFrameType::TrpcStreamFrameData as u8 => {
                         info.resp_content_length = Some(total_len as u32 - 16);
