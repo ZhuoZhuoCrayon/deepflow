@@ -335,6 +335,11 @@ impl TrpcLog {
             return Ok(());
         };
 
+        match key {
+            "tracestate" => return Ok(()),
+            _ => {}
+        }
+
         let mut need_skip = false;
         if config.is_trace_id(key) {
             info.trace_id = HttpLog::decode_id(val, key, HttpLog::TRACE_ID);
