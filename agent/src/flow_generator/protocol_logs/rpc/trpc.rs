@@ -3,7 +3,7 @@ mod trpc_policy;
 
 use prost::Message;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::str;
 use trpc_policy::{
     RequestProtocol, ResponseProtocol, TrpcDataFrameType, TrpcRetCode, TrpcStreamCloseMeta,
@@ -43,6 +43,14 @@ pub struct TrpcInfo {
     rrt: u64,
 
     msg_type: LogMessageType,
+    #[serde(skip)]
+    is_req_end: bool,
+    #[serde(skip)]
+    is_resp_end: bool,
+    // #[serde(skip)]
+    // is_client_closed: bool,
+    // #[serde(skip)]
+    // is_server_closed: bool,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     trace_id: Option<String>,
@@ -110,6 +118,7 @@ impl From<TrpcInfo> for L7ProtocolSendLog {
             resp: L7Response {
                 status: info.status,
                 code: info.ret,
+                exception: info.err_msg.unwrap_or_default(),
                 ..Default::default()
             },
             trace_info: Some(TraceInfo {
@@ -156,43 +165,65 @@ impl L7ProtocolInfoInterface for TrpcInfo {
         self.func.clone()
     }
 
+    fn is_req_resp_end(&self) -> (bool, bool) {
+        return (self.is_req_end, self.is_resp_end)
+    }
+
+    fn need_merge(&self) -> bool {
+        return match self.data_frame_type {
+            // 流式场景是多帧传输，需要聚合
+            Some(s) if s == TrpcDataFrameType::TrpcStreamFrame as u8 => true,
+            _ => false
+        }
+    }
+
     fn merge_log(&mut self, other: &mut L7ProtocolInfo) -> Result<()> {
         if let (left, L7ProtocolInfo::TrpcInfo(right)) = (self, other) {
             match right.msg_type {
                 LogMessageType::Request => {
                     if right.req_content_length.is_some() {
-                        left.req_content_length = right.req_content_length
+                        left.req_content_length = right.req_content_length;
                     }
                     if right.caller.is_some() {
-                        left.caller = right.caller.clone()
+                        left.caller = right.caller.clone();
                     }
                     if right.callee.is_some() {
-                        left.callee = right.callee.clone()
+                        left.callee = right.callee.clone();
                     }
                     if right.func.is_some() {
-                        left.func = right.func.clone()
+                        left.func = right.func.clone();
+                    }
+                    if right.is_req_end {
+                        left.is_req_end = true;
                     }
                 }
                 LogMessageType::Response => {
                     if right.resp_content_length.is_some() {
-                        left.resp_content_length = right.resp_content_length
+                        left.resp_content_length = right.resp_content_length;
                     }
                     if right.status != left.status {
-                        left.status = right.status
+                        left.status = right.status;
                     }
                     if right.ret.is_some() {
-                        left.ret = right.ret
+                        left.ret = right.ret;
                     }
                     if right.func_ret.is_some() {
                         left.func_ret = right.ret;
                     }
                     if right.err_msg.is_some() {
-                        left.err_msg = right.err_msg.clone()
+                        left.err_msg = right.err_msg.clone();
+                    }
+                    if right.is_resp_end {
+                        left.is_resp_end = true;
                     }
                 }
                 _ => {}
             }
-            left.attributes.append(&mut right.attributes);
+
+            let mut existing_keys: HashSet<_> = left.attributes.iter().map(|kv| kv.key.clone()).collect();
+            let new_attributes: Vec<_> = right.attributes.drain(..).filter(|kv| existing_keys.insert(kv.key.clone())).collect();
+            left.attributes.extend(new_attributes);
+
             if right.trace_id.is_some() {
                 left.trace_id = right.trace_id.clone()
             }
@@ -350,6 +381,7 @@ impl TrpcLog {
                 let Some(req) = RequestProtocol::decode(&payload[16..16 + header_len as usize]).ok() else {
                     return Err(Error::TrpcLogParseFailed);
                 };
+                info.is_req_end = true;
                 info.msg_type = LogMessageType::Request;
                 self.perf_stats.as_mut().map(|p| p.inc_req());
 
@@ -371,6 +403,7 @@ impl TrpcLog {
                 let Some(resp) = ResponseProtocol::decode(&payload[16..16 + header_len as usize]).ok() else {
                     return Err(Error::TrpcLogParseFailed);
                 };
+                info.is_resp_end = true;
                 info.msg_type = LogMessageType::Response;
                 self.perf_stats.as_mut().map(|p| p.inc_resp());
 
@@ -409,6 +442,7 @@ impl TrpcLog {
         };
 
         if let Some(request_meta) = init_meta.request_meta {
+            info.is_req_end = true;
             info.msg_type = LogMessageType::Request;
             self.perf_stats.as_mut().map(|p| p.inc_req());
             info.caller = Some(String::from_utf8(request_meta.caller).unwrap_or_default());
@@ -421,9 +455,11 @@ impl TrpcLog {
                 "[trpc][init] Stream[{:?}] caller -> {:?}, callee -> {:?}, func -> {:?}, attributes -> {:?}",
                 info.stream_id, info.caller, info.callee, info.func, info.attributes
             );
+
         } else if let Some(response_meta) = init_meta.response_meta {
             // 成功表示流将持续，只有失败才认为流结束
             if response_meta.ret != TrpcRetCode::TrpcInvokeSuccess as i32 {
+                info.is_resp_end = true;
                 info.msg_type = LogMessageType::Response;
                 self.perf_stats.as_mut().map(|p| p.inc_resp());
 
@@ -431,8 +467,10 @@ impl TrpcLog {
                 info.err_msg = Some(String::from_utf8(response_meta.error_msg).unwrap_or_default());
                 self.set_status(info, param);
             }
+        } else {
+            return Err(Error::TrpcLogParseFailed);
         }
-        Err(Error::TrpcLogParseFailed)
+        Ok(())
     }
 
     fn handle_stream_close(
@@ -456,27 +494,33 @@ impl TrpcLog {
         info.err_msg = Some(String::from_utf8(close_meta.msg).unwrap_or_default());
         self.on_trans_info(close_meta.trans_info, info, config)?;
 
-        if close_meta.close_type == 1 {
-            if close_meta.ret == TrpcRetCode::TrpcInvokeSuccess as i32 {
-                info.ret = Some(TrpcRetCode::TrpcStreamUnknownErr as i32);
-            }
-            self.set_status(info, param);
-        } else {
-            // 以服务端 close 作为最终响应
-            if param.direction == PacketDirection::ServerToClient {
-                info.resp_content_length = Some(total_len - 16);
+        match close_meta.close_type {
+            1 => {
+                if close_meta.ret == TrpcRetCode::TrpcInvokeSuccess as i32 {
+                    info.ret = Some(TrpcRetCode::TrpcStreamUnknownErr as i32);
+                }
                 self.set_status(info, param);
+            },
+            _ => {
+                // 以服务端 close 作为最终响应
+                if param.direction == PacketDirection::ServerToClient {
+                    info.resp_content_length = Some(total_len - 16);
+                    self.set_status(info, param);
+                }
             }
         }
 
-        // 以服务端 close 作为最终响应
         if param.direction == PacketDirection::ServerToClient {
+            // 以服务端 close 作为最终响应
+            info.is_resp_end = true;
             info.msg_type = LogMessageType::Response;
             self.perf_stats.as_mut().map(|p| p.inc_resp());
+        } else {
+            info.msg_type = LogMessageType::Request;
         }
 
         warn!(
-            "[trpc][close] Stream[{:?}] close_type -> {:?} msg_type -> {:?}, direction -> {:?}, ret -> {:?}, status -> {:?}",
+            "[trpc][close] Stream[{:?}] close_type -> {:?}, msg_type -> {:?}, direction -> {:?}, ret -> {:?}, status -> {:?}",
             info.stream_id, close_meta.close_type, info.msg_type, param.direction, info.ret, info.status
         );
 
@@ -535,18 +579,18 @@ impl TrpcLog {
                     Some(s) if s == TrpcStreamFrameType::TrpcStreamFrameData as u8 => {
                         info.resp_content_length = Some(total_len as u32 - 16);
                     }
-                    _ => {
-                        info.msg_type = LogMessageType::Request;
-                    }
+                    _ => {return Err(Error::TrpcLogParseFailed)}
                 }
             }
             _ => return Err(Error::TrpcLogParseFailed),
         }
 
-        info.cal_rrt(param, None).map(|rrt| {
-            info.rrt = rrt;
-            self.perf_stats.as_mut().map(|p| p.update_rrt(rrt));
-        });
+        if info.is_req_end || info.is_resp_end {
+            info.cal_rrt(param, None).map(|rrt| {
+                info.rrt = rrt;
+                self.perf_stats.as_mut().map(|p| p.update_rrt(rrt));
+            });
+        }
 
         Ok(())
     }

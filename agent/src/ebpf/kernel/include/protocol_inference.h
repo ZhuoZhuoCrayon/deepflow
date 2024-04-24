@@ -2232,8 +2232,12 @@ static __inline enum message_type infer_trpc_message(const char *buf,
     if (buf[2] == '\x00' && buf[3] == '\x00')
         return MSG_REQUEST;
 
-    if (buf[3] == '\x01' && (buf[3] == '\x01' || buf[3] == '\x02' || buf[3] == '\x03' || buf[3] == '\x04'))
-        return MSG_REQUEST;
+     if (buf[2] == '\x01' && (buf[3] == '\x01' || buf[3] == '\x02' || buf[3] == '\x03' || buf[3] == '\x04'))
+         return MSG_REQUEST;
+
+    // __u8 stream_frame_type = buf[3];
+    // if (buf[3] == '\x01' && stream_frame_type >= 1 && stream_frame_type <= 4)
+    //    return MSG_REQUEST;
 
     // unsigned int total_len = __bpf_ntohl(*(__u32 *) & buf[4]);
     // unsigned int header_len = __bpf_ntohl(*(__u16 *) & buf[8]);
