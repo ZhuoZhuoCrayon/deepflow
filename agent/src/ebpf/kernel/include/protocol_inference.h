@@ -2226,9 +2226,6 @@ static __inline enum message_type infer_trpc_message(const char *buf,
     if (buf[0] != '\x09' || buf[1] != '\x30')
         return MSG_UNKNOWN;
 
-    // __u8 data_frame_type = buf[2];
-    // __u8 stream_frame_type = buf[3];
-
     if (buf[2] == '\x00' && buf[3] == '\x00')
         return MSG_REQUEST;
 
