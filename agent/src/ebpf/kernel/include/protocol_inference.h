@@ -2207,6 +2207,44 @@ static __inline enum message_type infer_brpc_message(const char *buf,
 	return MSG_REQUEST;
 }
 
+static __inline enum message_type infer_trpc_message(const char *buf,
+                                                     size_t count,
+                                                     struct conn_info_s
+                                                     *conn_info)
+{
+    if (count < 16)
+        return MSG_UNKNOWN;
+
+    if (!protocol_port_check_2(PROTO_TRPC, conn_info))
+        return MSG_UNKNOWN;
+
+    if (is_infer_socket_valid(conn_info->socket_info_ptr)) {
+        if (conn_info->socket_info_ptr->l7_proto != PROTO_TRPC)
+            return MSG_UNKNOWN;
+    }
+
+    if (buf[0] != '\x09' || buf[1] != '\x30')
+        return MSG_UNKNOWN;
+
+    if (buf[2] == '\x00' && buf[3] == '\x00')
+        return MSG_REQUEST;
+
+     if (buf[2] == '\x01' && (buf[3] == '\x01' || buf[3] == '\x02' || buf[3] == '\x03' || buf[3] == '\x04'))
+         return MSG_REQUEST;
+
+    // __u8 stream_frame_type = buf[3];
+    // if (buf[3] == '\x01' && stream_frame_type >= 1 && stream_frame_type <= 4)
+    //    return MSG_REQUEST;
+
+    // unsigned int total_len = __bpf_ntohl(*(__u32 *) & buf[4]);
+    // unsigned int header_len = __bpf_ntohl(*(__u16 *) & buf[8]);
+
+    // if (header_len > total_len)
+    //     return MSG_UNKNOWN;
+
+    return MSG_UNKNOWN;
+}
+
 static __inline bool check_zmtp_mechanism(const char *buf)
 {
 	// check mechanism fields
@@ -3445,6 +3483,14 @@ infer_protocol_1(struct ctx_info_s *ctx,
 				return inferred_message;
 			}
 			break;
+        case PROTO_TRPC:
+			if ((inferred_message.type =
+			     infer_trpc_message(infer_buf, count,
+						conn_info)) != MSG_UNKNOWN) {
+				inferred_message.protocol = PROTO_TRPC;
+				return inferred_message;
+			}
+			break;
 		case PROTO_HTTP2:
 			if ((inferred_message.type =
 			     infer_http2_message(infer_buf, count,
@@ -3685,6 +3731,14 @@ infer_protocol_2(const char *infer_buf, size_t count,
 		    infer_brpc_message(infer_buf, count,
 				       conn_info)) != MSG_UNKNOWN) {
 		inferred_message.protocol = PROTO_BRPC;
+#ifdef LINUX_VER_5_2_PLUS
+    } else if (skip_proto != PROTO_TRPC && (inferred_message.type =
+#else
+    } else if ((inferred_message.type =
+#endif
+            infer_trpc_message(infer_buf, count,
+				       conn_info)) != MSG_UNKNOWN) {
+		inferred_message.protocol = PROTO_TRPC;
 #ifdef LINUX_VER_5_2_PLUS
 	} else if (skip_proto != PROTO_POSTGRESQL && (inferred_message.type =
 #else

@@ -41,6 +41,8 @@ pub enum Error {
     HttpHeaderParseFailed,
     #[error("kafka log parse failed")]
     KafkaLogParseFailed,
+    #[error("trpc log parse failed")]
+    TrpcLogParseFailed,
     #[error("kafka perf parse failed")]
     KafkaPerfParseFailed,
     #[error("mqtt log parse failed")]
