@@ -223,6 +223,8 @@ static inline char *get_proto_name(uint16_t proto_id)
 		return "Oracle";
 	case PROTO_FASTCGI:
 		return "FastCGI";
+	case PROTO_TRPC:
+		return "tRPC";
 	case PROTO_MONGO:
 		return "MongoDB";
 	case PROTO_TLS:
