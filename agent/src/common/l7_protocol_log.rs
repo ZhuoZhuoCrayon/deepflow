@@ -39,7 +39,7 @@ use crate::flow_generator::protocol_logs::plugin::get_custom_log_parser;
 use crate::flow_generator::protocol_logs::sql::ObfuscateCache;
 use crate::flow_generator::protocol_logs::{
     DnsLog, DubboLog, HttpLog, KafkaLog, MongoDBLog, MqttLog, MysqlLog, OracleLog, PostgresqlLog,
-    RedisLog, SofaRpcLog, TlsLog,
+    RedisLog, SofaRpcLog, TlsLog, TrpcLog,
 };
 use crate::flow_generator::{LogMessageType, Result};
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -171,6 +171,7 @@ impl_protocol_parser! {
         PostgreSQL(PostgresqlLog),
         Dubbo(DubboLog),
         FastCGI(FastCGILog),
+        Trpc(TrpcLog),
         Oracle(OracleLog),
         MQTT(MqttLog),
         TLS(TlsLog),

@@ -197,7 +197,7 @@ extern "C" fn debug_callback(_data: *mut c_char, len: c_int) {
             // Handle the case where conversion to a Rust string fails
             eprintln!("Error: Unable to convert C string to Rust string");
         }
-    }	
+    }
 }
 
 extern "C" fn socket_trace_callback(sd: *mut SK_BPF_DATA) {
@@ -227,6 +227,8 @@ extern "C" fn socket_trace_callback(sd: *mut SK_BPF_DATA) {
             proto_tag.push_str("SOFARPC");
         } else if sk_proto_safe(sd) == SOCK_DATA_FASTCGI {
             proto_tag.push_str("FASTCGI");
+        } else if sk_proto_safe(sd) == SOCK_DATA_TRPC {
+            proto_tag.push_str("TRPC");
         } else if sk_proto_safe(sd) == SOCK_DATA_MONGO {
             proto_tag.push_str("MONGO");
         } else if sk_proto_safe(sd) == SOCK_DATA_TLS {
@@ -385,6 +387,7 @@ fn main() {
         enable_ebpf_protocol(SOCK_DATA_DUBBO as c_int);
         enable_ebpf_protocol(SOCK_DATA_SOFARPC as c_int);
         enable_ebpf_protocol(SOCK_DATA_FASTCGI as c_int);
+        enable_ebpf_protocol(SOCK_DATA_TRPC as c_int);
         enable_ebpf_protocol(SOCK_DATA_MYSQL as c_int);
         enable_ebpf_protocol(SOCK_DATA_POSTGRESQL as c_int);
         enable_ebpf_protocol(SOCK_DATA_REDIS as c_int);
@@ -438,7 +441,7 @@ fn main() {
                     ::std::process::exit(1);
                 }
         */
- 
+
         set_protocol_ports_bitmap(
             SOCK_DATA_HTTP1 as c_int,
             CString::new("1-65535".as_bytes())
@@ -469,6 +472,13 @@ fn main() {
         );
         set_protocol_ports_bitmap(
             SOCK_DATA_FASTCGI as c_int,
+            CString::new("1-65535".as_bytes())
+                .unwrap()
+                .as_c_str()
+                .as_ptr(),
+        );
+        set_protocol_ports_bitmap(
+            SOCK_DATA_TRPC as c_int,
             CString::new("1-65535".as_bytes())
                 .unwrap()
                 .as_c_str()
