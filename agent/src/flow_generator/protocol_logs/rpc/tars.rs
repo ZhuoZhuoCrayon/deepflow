@@ -377,12 +377,21 @@ impl TarsLog {
                 let proto_map = proto::JceBuf::new(
                     &payload[4..], &[3, 7, 8, 10]
                 ).read_to_hashmap();
+                let package_type = proto::get_proto_package_type(&proto_map, proto::TAG_REQ_PACKAGE_TYPE);
                 info.version = Some(proto::get_proto_version(&proto_map, proto::TAG_REQ_VERSION));
-                info.packet_type = Some(proto::get_proto_package_type(&proto_map, proto::TAG_REQ_PACKAGE_TYPE));
+                info.packet_type = Some(package_type);
                 info.request_id = Some(proto::get_proto_request_id(&proto_map, proto::TAG_REQ_REQUEST_ID));
                 info.servant_name = Some(proto::get_proto_string(&proto_map, proto::TAG_REQ_SERVANT_NAME));
                 info.func_name = Some(proto::get_proto_string(&proto_map, proto::TAG_REQ_FUNC_NAME));
                 self.on_context(info, &config.l7_log_dynamic, &proto_map, proto::TAG_REQ_CONTEXT)?;
+                // 单向调用不会回包，默认成功
+                if package_type == proto::CPackageType::Oneway as i8 {
+                    info.resp_content_length = Some(length);
+                    info.msg_type = LogMessageType::Session;
+                    self.perf_stats.as_mut().map(|p| p.inc_resp());
+                    info.ret = Some(proto::IRet::ServerSuccess as i32);
+                    self.set_status(info, param);
+                }
             }
             PacketDirection::ServerToClient => {
                 info.resp_content_length = Some(length);
