@@ -27,7 +27,7 @@ use crate::{
         protocol_logs::{
             fastcgi::FastCGIInfo, pb_adapter::L7ProtocolSendLog, DnsInfo, DubboInfo, HttpInfo,
             KafkaInfo, MongoDBInfo, MqttInfo, MysqlInfo, OracleInfo, PostgreInfo, RedisInfo,
-            SofaRpcInfo, TlsInfo, TrpcInfo,
+            SofaRpcInfo, TarsInfo, TlsInfo, TrpcInfo,
         },
         AppProtoHead, LogMessageType, Result,
     },
@@ -69,6 +69,7 @@ all_protocol_info!(
     DubboInfo(DubboInfo),
     FastCGIInfo(FastCGIInfo),
     TrpcInfo(TrpcInfo),
+    TarsInfo(TarsInfo),
     KafkaInfo(KafkaInfo),
     MqttInfo(MqttInfo),
     PostgreInfo(PostgreInfo),

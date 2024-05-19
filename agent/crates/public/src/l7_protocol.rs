@@ -49,6 +49,7 @@ pub enum L7Protocol {
     FastCGI = 44,
 
     Trpc = 46,
+    Tars = 47,
 
     // SQL
     MySQL = 60,
@@ -99,6 +100,7 @@ impl From<String> for L7Protocol {
             "grpc" => Self::Grpc,
             "fastcgi" => Self::FastCGI,
             "trpc" => Self::Trpc,
+            "tars" => Self::Tars,
             "custom" => Self::Custom,
             "sofarpc" => Self::SofaRPC,
             "mysql" => Self::MySQL,

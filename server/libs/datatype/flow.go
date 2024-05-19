@@ -156,6 +156,7 @@ const (
 	L7_PROTOCOL_SOFARPC L7Protocol = 43
 	L7_PROTOCOL_FASTCGI L7Protocol = 44
 	L7_PROTOCOL_TRPC    L7Protocol = 46
+	L7_PROTOCOL_TARS    L7Protocol = 47
 	L7_PROTOCOL_MYSQL   L7Protocol = 60
 	L7_PROTOCOL_POSTGRE L7Protocol = 61
 	L7_PROTOCOL_ORACLE  L7Protocol = 62
@@ -631,6 +632,12 @@ func (p L7Protocol) String(isTLS bool) string {
     	} else {
     		return "tRPC"
     	}
+	case L7_PROTOCOL_TARS:
+    	if isTLS {
+    		return "Tars_TLS"
+    	} else {
+    		return "Tars"
+    	}
 	case L7_PROTOCOL_MYSQL:
 		if isTLS {
 			return "MySQL_TLS"
@@ -713,6 +720,7 @@ var L7ProtocolStringMap = map[string]L7Protocol{
 	strings.ToLower(L7_PROTOCOL_HTTP_2.String(false)):  L7_PROTOCOL_HTTP_2,
 	strings.ToLower(L7_PROTOCOL_DNS.String(false)):     L7_PROTOCOL_DNS,
 	strings.ToLower(L7_PROTOCOL_TRPC.String(false)):    L7_PROTOCOL_TRPC,
+	strings.ToLower(L7_PROTOCOL_TARS.String(false)):    L7_PROTOCOL_TARS,
 	strings.ToLower(L7_PROTOCOL_MYSQL.String(false)):   L7_PROTOCOL_MYSQL,
 	strings.ToLower(L7_PROTOCOL_REDIS.String(false)):   L7_PROTOCOL_REDIS,
 	strings.ToLower(L7_PROTOCOL_DUBBO.String(false)):   L7_PROTOCOL_DUBBO,

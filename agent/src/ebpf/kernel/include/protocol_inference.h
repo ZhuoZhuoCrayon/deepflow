@@ -1431,6 +1431,35 @@ static __inline enum message_type infer_trpc_message(const char *buf,
     return MSG_UNKNOWN;
 }
 
+static __inline enum message_type infer_tars_message(const char *buf,
+                                                     size_t count,
+                                                     struct conn_info_s
+                                                     *conn_info)
+{
+    if (count < 13)
+        return MSG_UNKNOWN;
+
+    if (!protocol_port_check_2(PROTO_TARS, conn_info))
+        return MSG_UNKNOWN;
+
+    if (is_infer_socket_valid(conn_info->socket_info_ptr)) {
+        if (conn_info->socket_info_ptr->l7_proto != PROTO_TARS)
+            return MSG_UNKNOWN;
+    }
+
+    if (buf[4] != '\x10' && buf[4] != '\x11')
+        return MSG_UNKNOWN;
+
+    __u16 iversion_flag = __bpf_ntohl(*(__u16 *) & buf[5]);
+    if ((buf[5] > 3 || buf[5] == 0) && iversion_flag != '\x101' && iversion_flag != '\x7db')
+        return MSG_UNKNOWN;
+
+    if (buf[6] != '\x2c' && buf[6] != '\x20' && buf[7] != '\x2c' && buf[7] != '\x20')
+        return MSG_UNKNOWN;
+
+    return MSG_REQUEST;
+}
+
 /*
  * https://dubbo.apache.org/zh/blog/2018/10/05/dubbo-%E5%8D%8F%E8%AE%AE%E8%AF%A6%E8%A7%A3/
  * 0                                                                                       31
@@ -2413,6 +2442,14 @@ infer_protocol_1(struct ctx_info_s *ctx,
 				return inferred_message;
 			}
 			break;
+        case PROTO_TARS:
+			if ((inferred_message.type =
+			     infer_tars_message(infer_buf, count,
+						conn_info)) != MSG_UNKNOWN) {
+				inferred_message.protocol = PROTO_TARS;
+				return inferred_message;
+			}
+			break;
 		case PROTO_HTTP2:
 			if ((inferred_message.type =
 			     infer_http2_message(syscall_infer_addr,
@@ -2605,6 +2642,14 @@ infer_protocol_2(const char *infer_buf, size_t count,
             infer_trpc_message(infer_buf, count,
 				       conn_info)) != MSG_UNKNOWN) {
 		inferred_message.protocol = PROTO_TRPC;
+#ifdef LINUX_VER_5_2_PLUS
+    } else if (skip_proto != PROTO_TARS && (inferred_message.type =
+#else
+    } else if ((inferred_message.type =
+#endif
+            infer_tars_message(infer_buf, count,
+                       conn_info)) != MSG_UNKNOWN) {
+        inferred_message.protocol = PROTO_TARS;
 #ifdef LINUX_VER_5_2_PLUS
 	} else if (skip_proto != PROTO_POSTGRESQL && (inferred_message.type =
 #else

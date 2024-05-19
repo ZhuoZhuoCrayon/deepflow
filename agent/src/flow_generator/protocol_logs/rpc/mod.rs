@@ -16,10 +16,13 @@
 
 mod dubbo;
 mod sofa_rpc;
+mod tars;
+mod tars_p;
 mod trpc;
 
 pub use dubbo::{DubboInfo, DubboLog};
 pub use sofa_rpc::{
     decode_new_rpc_trace_context_with_type, SofaRpcInfo, SofaRpcLog, SOFA_NEW_RPC_TRACE_CTX_KEY,
 };
+pub use tars::{TarsInfo, TarsLog};
 pub use trpc::{TrpcInfo, TrpcLog};

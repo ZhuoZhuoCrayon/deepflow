@@ -43,6 +43,8 @@ pub enum Error {
     KafkaLogParseFailed,
     #[error("trpc log parse failed")]
     TrpcLogParseFailed,
+    #[error("tars log parse failed")]
+    TarsLogParseFailed,
     #[error("kafka perf parse failed")]
     KafkaPerfParseFailed,
     #[error("mqtt log parse failed")]

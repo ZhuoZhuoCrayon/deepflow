@@ -62,6 +62,7 @@ enum traffic_protocol {
 	PROTO_SOFARPC = 43,
 	PROTO_FASTCGI = 44,
     PROTO_TRPC = 46,
+    PROTO_TARS = 47,
 	PROTO_MYSQL = 60,
 	PROTO_POSTGRESQL = 61,
 	PROTO_ORACLE = 62,
