@@ -1447,14 +1447,14 @@ static __inline enum message_type infer_tars_message(const char *buf,
             return MSG_UNKNOWN;
     }
 
-    if (buf[4] != '\x10' && buf[4] != '\x11')
+    if (buf[4] != 0x10 && buf[4] != 0x11)
         return MSG_UNKNOWN;
 
     __u16 iversion_flag = __bpf_ntohl(*(__u16 *) & buf[5]);
-    if ((buf[5] > 3 || buf[5] == 0) && iversion_flag != '\x101' && iversion_flag != '\x7db')
+    if ((buf[5] > 3 || buf[5] == 0) && iversion_flag != 0x101 && iversion_flag != 0x7db)
         return MSG_UNKNOWN;
 
-    if (buf[6] != '\x2c' && buf[6] != '\x20' && buf[7] != '\x2c' && buf[7] != '\x20')
+    if (buf[6] != 0x2c && buf[6] != 0x20 && buf[7] != 0x2c && buf[7] != 0x20)
         return MSG_UNKNOWN;
 
     return MSG_REQUEST;
