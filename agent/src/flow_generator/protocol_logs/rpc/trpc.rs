@@ -378,6 +378,9 @@ impl TrpcLog {
         info: &mut TrpcInfo,
         config: &L7LogDynamicConfig,
     ) -> Result<()> {
+        if 16 + header_len as usize > payload.len() {
+            return Err(Error::TrpcLogParseFailed);
+        }
         match param.direction {
             PacketDirection::ClientToServer => {
                 let Some(req) = RequestProtocol::decode(&payload[16..16 + header_len as usize]).ok() else {
