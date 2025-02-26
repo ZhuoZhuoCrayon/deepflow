@@ -232,7 +232,6 @@ func EncodeToPrometheus(e app.Document, utags *utag.UniversalTagsManager, cfg *c
 
 	labels := getPrometheusLabels(e, uTags0, uTags1, cfg)
 	for _, structTags := range cfg.ExportFieldStructTags[dataSourceId] {
-		log.Infof("[for_debug_new] ||| export item %s, %s, %s, %s, %d, %d, %v", structTags.Name, structTags.MapName, structTags.FieldName, structTags.Category, structTags.CategoryBit, structTags.SubCategoryBit, structTags.IsExportedField)
 
 		if structTags.CategoryBit&config.METRICS == 0 {
 			continue

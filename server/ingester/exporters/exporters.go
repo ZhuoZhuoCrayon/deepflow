@@ -286,7 +286,6 @@ func (es *Exporters) initStructTags(item interface{}, dataSourceId uint32, expor
 				structTag.EnumIntMap, structTag.EnumStringMap = es.translation.GetMaps(enumFile)
 			}
 			structTag.IsExportedField = IsExportField(&structTag, exporterCfg.ExportFieldCategoryBits, exporterCfg.ExportFieldNames)
-			log.Infof("[for_debug_new_new] ||| tag %v, cate: %v, cfg: %v, result: %v", structTag, exporterCfg.ExportFieldCategoryBits, exporterCfg.ExportFieldNames, structTag.IsExportedField)
 			all = append(all, structTag)
 		}
 
@@ -351,8 +350,6 @@ func (es *Exporters) Put(dataSourceId uint32, decoderIndex int, item common.Expo
 		if !es.IsExportItem(item, dataSourceId, exporterCfgs[i]) {
 			continue
 		}
-
-		log.Infof("[for_debug] ||| export item %v", exporterCfgs[i].ExportFieldStructTags[dataSourceId])
 
 		exportersCache := es.getPutCache(int(dataSourceId), decoderIndex, i)
 		item.AddReferenceCount()
