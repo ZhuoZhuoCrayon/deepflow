@@ -30,7 +30,6 @@ use crate::{
         Error,
     },
     utils::bytes::{read_u16_be, read_u32_be},
-    HttpLog,
 };
 
 #[derive(Serialize, Debug, Default, Clone)]
@@ -339,11 +338,19 @@ impl TrpcLog {
 
         let mut need_skip = false;
         if config.is_trace_id(key) {
-            info.trace_id = HttpLog::decode_id(val, key, HttpLog::TRACE_ID);
+            if let Some(trace_type) = config.trace_types.iter().find(|t| t.check(key)) {
+                trace_type
+                    .decode_trace_id(val)
+                    .map(|id| info.trace_id = Some(id.to_string()));
+            }
             need_skip = true
         }
         if config.is_span_id(key) {
-            info.span_id = HttpLog::decode_id(val, key, HttpLog::SPAN_ID);
+            if let Some(trace_type) = config.trace_types.iter().find(|t| t.check(key)) {
+                trace_type
+                    .decode_span_id(val)
+                    .map(|id| info.span_id = Some(id.to_string()));
+            }
             need_skip = true
         }
 
@@ -380,7 +387,9 @@ impl TrpcLog {
     ) -> Result<()> {
         match param.direction {
             PacketDirection::ClientToServer => {
-                let Some(req) = RequestProtocol::decode(&payload[16..16 + header_len as usize]).ok() else {
+                let Some(req) =
+                    RequestProtocol::decode(&payload[16..16 + header_len as usize]).ok()
+                else {
                     return Err(Error::TrpcLogParseFailed);
                 };
                 info.is_req_end = true;
@@ -397,7 +406,9 @@ impl TrpcLog {
                 self.on_trans_info(req.trans_info, info, config)?;
             }
             PacketDirection::ServerToClient => {
-                let Some(resp) = ResponseProtocol::decode(&payload[16..16 + header_len as usize]).ok() else {
+                let Some(resp) =
+                    ResponseProtocol::decode(&payload[16..16 + header_len as usize]).ok()
+                else {
                     return Err(Error::TrpcLogParseFailed);
                 };
                 info.is_resp_end = true;
@@ -471,7 +482,8 @@ impl TrpcLog {
             return Err(Error::TrpcLogParseFailed);
         }
 
-        let Some(close_meta) = TrpcStreamCloseMeta::decode(&payload[16..total_len as usize]).ok() else {
+        let Some(close_meta) = TrpcStreamCloseMeta::decode(&payload[16..total_len as usize]).ok()
+        else {
             return Err(Error::TrpcLogParseFailed);
         };
 
@@ -562,7 +574,7 @@ impl TrpcLog {
         }
 
         if info.is_req_end || info.is_resp_end {
-            info.cal_rrt(param, None).map(|rrt| {
+            info.cal_rrt(param).map(|rrt| {
                 info.rrt = rrt;
                 self.perf_stats.as_mut().map(|p| p.update_rrt(rrt));
             });
