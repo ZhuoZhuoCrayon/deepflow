@@ -535,7 +535,7 @@ static __inline enum message_type parse_http2_headers_frame(const char
 			continue;
 
 		/*
-		 * ref : https://datatracker.ietf.org/doc/html/rfc7541#appendix-A 
+		 * ref : https://datatracker.ietf.org/doc/html/rfc7541#appendix-A
 		 * Static Table Entries:
 		 * +-------+-----------------------------+---------------+
 		 * | Index | Header Name                 | Header Value  |
@@ -669,7 +669,7 @@ static __inline void check_and_fetch_prev_data(struct conn_info_s *conn_info)
 			 * When data is merged, that is, when two or more data with the same
 			 * direction are merged together and processed as one data, the previously
 			 * saved direction needs to be restored.
-			 * 
+			 *
 			 * At the beginning of the inference stage, 'socket_info_ptr->direction'
 			 * represents the direction of the previously sent data. During the final
 			 * data transmission stage, it will be updated to reflect the direction of
@@ -773,7 +773,7 @@ static __inline enum message_type infer_mysql_message(const char *buf,
 	 *       - Command: Query (3)
 	 *       - Statement: show databases
 	 */
-	
+
 	if (count != (len + 4))
 		return MSG_UNKNOWN;
 
@@ -1125,7 +1125,7 @@ static __inline enum message_type infer_sofarpc_message(const char *buf,
 	 * source code, it is found that the configuration value of
 	 * SerializerManager is Hessian2 = 1, meaning Hessian2 is used by
 	 * default for serialization and deserialization.
-	 * 
+	 *
 	 * 0 -- "hessian", 1 -- "hessian2", 11 -- "protobuf", 12 -- "json"
 	 */
 	__u8 codec = infer_buf[9];
@@ -1259,11 +1259,11 @@ static __inline enum message_type infer_dns_message(const char *buf,
 
 	bool update_tcp_dns_prev_count = false;
 	struct dns_header *dns = (struct dns_header *)buf;
-	
+
 	/*
 	 * Note that TCP DNS adds two length bytes at the beginning of the protocol,
 	 * whereas UDP DNS does not. We need to handle this properly to ensure that
-	 * these two length bytes are not sent to the upper layer.  
+	 * these two length bytes are not sent to the upper layer.
 	 *
 	 * When receiving data, the client does not first receive two bytes but instead
 	 * receives everything at once; whereas the server receives two bytes (length) first
@@ -2331,6 +2331,44 @@ static __inline enum message_type infer_brpc_message(const char *buf,
 		return MSG_UNKNOWN;
 
 	return MSG_REQUEST;
+}
+
+static __inline enum message_type infer_trpc_message(const char *buf,
+                                                     size_t count,
+                                                     struct conn_info_s
+                                                     *conn_info)
+{
+    if (count < 16)
+        return MSG_UNKNOWN;
+
+    if (!protocol_port_check_2(PROTO_TRPC, conn_info))
+        return MSG_UNKNOWN;
+
+    if (is_infer_socket_valid(conn_info->socket_info_ptr)) {
+        if (conn_info->socket_info_ptr->l7_proto != PROTO_TRPC)
+            return MSG_UNKNOWN;
+    }
+
+    if (buf[0] != '\x09' || buf[1] != '\x30')
+        return MSG_UNKNOWN;
+
+    if (buf[2] == '\x00' && buf[3] == '\x00')
+        return MSG_REQUEST;
+
+     if (buf[2] == '\x01' && (buf[3] == '\x01' || buf[3] == '\x02' || buf[3] == '\x03' || buf[3] == '\x04'))
+         return MSG_REQUEST;
+
+    // __u8 stream_frame_type = buf[3];
+    // if (buf[3] == '\x01' && stream_frame_type >= 1 && stream_frame_type <= 4)
+    //    return MSG_REQUEST;
+
+    // unsigned int total_len = __bpf_ntohl(*(__u32 *) & buf[4]);
+    // unsigned int header_len = __bpf_ntohl(*(__u16 *) & buf[8]);
+
+    // if (header_len > total_len)
+    //     return MSG_UNKNOWN;
+
+    return MSG_UNKNOWN;
 }
 
 static __inline bool check_zmtp_mechanism(const char *buf)
@@ -3414,6 +3452,14 @@ infer_protocol_2(const char *infer_buf, size_t count,
 				       conn_info)) != MSG_UNKNOWN) {
 		inferred_message.protocol = PROTO_BRPC;
 #if defined(LINUX_VER_KFUNC) || defined(LINUX_VER_5_2_PLUS)
+	} else if (skip_proto != PROTO_TRPC && (inferred_message.type =
+#else
+	} else if ((inferred_message.type =
+#endif
+		    infer_trpc_message(infer_buf, count,
+				       conn_info)) != MSG_UNKNOWN) {
+        inferred_message.protocol = PROTO_TRPC;
+#if defined(LINUX_VER_KFUNC) || defined(LINUX_VER_5_2_PLUS)
 	} else if (skip_proto != PROTO_POSTGRESQL && (inferred_message.type =
 #else
 	} else if ((inferred_message.type =
@@ -3728,6 +3774,14 @@ infer_protocol_1(struct ctx_info_s *ctx,
 			     infer_brpc_message(infer_buf, count,
 						conn_info)) != MSG_UNKNOWN) {
 				inferred_message.protocol = PROTO_BRPC;
+				return inferred_message;
+			}
+			break;
+        case PROTO_TRPC:
+			if ((inferred_message.type =
+			     infer_trpc_message(infer_buf, count,
+						conn_info)) != MSG_UNKNOWN) {
+				inferred_message.protocol = PROTO_TRPC;
 				return inferred_message;
 			}
 			break;

@@ -1077,6 +1077,7 @@ vtap_group_id: g-xxxxxx
   #- SofaRPC
   #- FastCGI
   #- bRPC
+  #- tRPC
   #- Dubbo
   #- MySQL
   #- PostgreSQL
